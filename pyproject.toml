@@ -34,7 +34,8 @@ project_name = "Baccata"
 bundle = "org.baccata"
 version = "0.1.0"
 url = "https://github.com/b0bs0n/baccata"
-license.text = "GPL-3.0-or-later"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 author = "b0bs0n"
 author_email = "96993735+b0bs0n@users.noreply.github.com"
 
