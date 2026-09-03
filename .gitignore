@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+build/
+dist/
+logs/
+# briefcase build cache (~1 GB) and editable-install metadata
+.briefcase/
+*.dist-info/
+# captures, tests, examples, knxprods, docs, tools, notes — never published
+private/
