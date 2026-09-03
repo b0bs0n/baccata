@@ -50,13 +50,12 @@ icon = "icons/baccata"                # baccata-<n>.png + baccata.icns (iconutil
 universal_build = false            # arm64 only; halves the bundle
 min_os_version = "13.0"            # PySide6 6.11 ships macosx_13_0 wheels only
 requires = ["std-nslog>=1.0.3"]
+info."NSCameraUsageDescription" = "Scan the KNX Secure QR code on a device."
+entitlement."com.apple.security.device.camera" = true
 
 # Trim the PySide6 install to what Baccata imports (QtCore/Gui/Widgets +
 # QtMultimedia for the QR camera scan).  Regenerate after a PySide6 bump:
 #   cd private && uv run python tools/gen_cleanup.py
 cleanup_paths = []
-
-
-[tool.briefcase.app.baccata.linux]
 
 [tool.briefcase.app.baccata.windows]
