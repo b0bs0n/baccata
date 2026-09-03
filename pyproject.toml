@@ -3,6 +3,7 @@ name = "baccata"
 version = "0.1.0"
 description = "KNX project editor and commissioning tool"
 license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "cryptography>=50.0.1",
@@ -44,7 +45,7 @@ long_description = """Baccata is an editor and commissioning tool for KNX
 installations: edit projects, download parameters to devices, and manage
 KNX Data Secure."""
 sources = ["src/baccata"]
-icon = "icons/baccata"                # baccata-<n>.png + baccata.icns (iconutil), private/tools/gen_icon.py
+icon = "icons/baccata"                # baccata-<n>.png + .icns + .ico, private/tools/gen_icon.py
 
 [tool.briefcase.app.baccata.macOS]
 universal_build = false            # arm64 only; halves the bundle
