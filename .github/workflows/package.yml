@@ -16,12 +16,8 @@ jobs:
         include:
           - os: macos-latest
             cmd: briefcase package macOS --adhoc-sign
-            bundle: build/baccata/macos/app/Baccata.app/Contents/Resources
-            python: python
           - os: windows-latest
             cmd: briefcase package windows -p zip
-            bundle: build/baccata/windows/app/src
-            python: build/baccata/windows/app/src/python/python.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,8 +26,18 @@ jobs:
           python-version: "3.12"
       - run: uv sync
       - run: uv run ${{ matrix.cmd }}
-      - name: Smoke-test the trimmed bundle
-        run: uv run ${{ matrix.python }} -S .github/smoke.py ${{ matrix.bundle }}
+      - name: Smoke-test the trimmed bundle (macOS)
+        if: runner.os == 'macOS'
+        run: uv run python -S .github/smoke.py build/baccata/macos/app/Baccata.app/Contents/Resources
+      - name: Smoke-test the trimmed bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pkgs = (Get-ChildItem build -Recurse -Directory -Filter app_packages | Select-Object -First 1).Parent.FullName
+          $py = (Get-ChildItem build -Recurse -Filter python.exe | Select-Object -First 1).FullName
+          Write-Host "bundle: $pkgs  python: $py"
+          & $py -S .github/smoke.py $pkgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
           name: baccata-${{ matrix.os }}
