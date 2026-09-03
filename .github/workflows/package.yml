@@ -34,9 +34,8 @@ jobs:
         shell: pwsh
         run: |
           $pkgs = (Get-ChildItem build -Recurse -Directory -Filter app_packages | Select-Object -First 1).Parent.FullName
-          $py = (Get-ChildItem build -Recurse -Filter python.exe | Select-Object -First 1).FullName
-          Write-Host "bundle: $pkgs  python: $py"
-          & $py -S .github/smoke.py $pkgs
+          Get-ChildItem $pkgs | Select-Object -ExpandProperty Name
+          uv run python -S .github/smoke.py $pkgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
