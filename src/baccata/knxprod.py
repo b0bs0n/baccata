@@ -209,6 +209,15 @@ class Program:
                                              # so never a `secure` signal
         self.app_number = 0
         self.app_version = 0
+        self.pei_type = 0                    # PeiType: goes into the BIM M112
+                                             # TaskSegment load record
+        self.dyntab = False                  # DynamicTableManagement: ETS packs
+                                             # the association table right behind
+                                             # the used address table instead of
+                                             # at its own segment address
+        self.plugin = ''                     # <Extension EtsUiPlugin/EtsDataHandler>
+                                             # GUID: an ETS plugin (a DLL in the
+                                             # knxprod) configures this product
         self.types: dict[str, ParamType] = {}
         self.params: dict[str, Param] = {}
         self.prefs: dict[str, ParamRef] = {}
@@ -383,8 +392,8 @@ class _Loader:
         self.ns = ns
         self.prog = Program()
         self.prog.name = ap.get('Name', '')
-        self.moduledefs = {md.get('Id'): md
-                           for md in ap.findall(f'{ns}ModuleDefs/{ns}ModuleDef')}
+        self.moduledefs = {md.get('Id'): md            # incl. nested SubModuleDefs
+                           for md in ap.iter(f'{ns}ModuleDef')}
         self.remap = ('', '')    # (def_prefix, instance_prefix)
         self.args = {}
 
@@ -400,6 +409,12 @@ class _Loader:
         self.prog.max_sec_grp_keys = int(ap.get('MaxSecurityGroupKeyTableEntries', 0))
         self.prog.app_number = int(ap.get('ApplicationNumber', 0))
         self.prog.app_version = int(ap.get('ApplicationVersion', 0))
+        self.prog.pei_type = int(ap.get('PeiType', 0))
+        self.prog.dyntab = ap.get('DynamicTableManagement') == 'true'
+        for ext in ap.iter(f'{self.ns}Extension'):      # sits under <Static>
+            self.prog.plugin = ext.get('EtsDataHandler') or ext.get('EtsUiPlugin') or ''
+            if self.prog.plugin:
+                break
         st = ap.find(f'{self.ns}Static')
         for e in st.findall(f'{self.ns}ParameterTypes/{self.ns}ParameterType'):
             self.prog.types[e.get('Id')] = _parse_type(e)
@@ -468,13 +483,22 @@ class _Loader:
             # extend, not assign: two blocks may share a MergeId
             self.prog.fragments.setdefault(lp.get('MergeId'), []).extend(steps)
 
+    def _num(self, v):
+        """Numeric attribute that may instead name a module argument (GVS puts
+        the argument id straight into Offset) or be empty."""
+        if not v:
+            return 0
+        if v.lstrip('-').isdigit():
+            return int(v)
+        return self._num(self.args.get('__num_' + v, ''))
+
     def _memloc(self, me):
         """(<Memory>) -> (segment_id, byte_offset, bit_offset); adds module base."""
-        off = int(me.get('Offset', 0))
+        off = self._num(me.get('Offset'))
         bo = me.get('BaseOffset')            # module ParamOffsBase arg id (raw)
         if bo:
-            off += int(self.args.get('__num_' + bo, 0))
-        return (self._id(me.get('CodeSegment')), off, int(me.get('BitOffset', 0)))
+            off += self._num(bo)
+        return (self._id(me.get('CodeSegment')), off, self._num(me.get('BitOffset')))
 
     def _add_param(self, e, union_loc):
         pid = self._id(e.get('Id'))
@@ -531,10 +555,9 @@ class _Loader:
             p.calcs.append(Calc(refs('LParameters'), refs('RParameters'),
                                 lr.text))
         for e in st.iter(f'{self.ns}ComObject'):
-            bn = e.get('BaseNumber')
-            base = int(self.args.get('__num_' + bn, 0)) if bn else 0
+            base = self._num(e.get('BaseNumber'))
             p.comobjs[self._id(e.get('Id'))] = ComObj(
-                self._id(e.get('Id')), base + int(e.get('Number', 0)),
+                self._id(e.get('Id')), base + self._num(e.get('Number')),
                 self._txt(e.get('Text', '')), e.get('FunctionText', ''),
                 e.get('ObjectSize', ''), e.get('DatapointType', ''), _flags(e))
         for e in st.iter(f'{self.ns}ComObjectRef'):
@@ -547,7 +570,7 @@ class _Loader:
 
     def _children(self, e):
         out = []
-        for c in e:
+        for c in (e if e is not None else []):    # no <Dynamic>: plain interfaces
             k = _tag(c)
             if k == 'ParameterBlock':
                 cols = [col for cs in c if _tag(cs) == 'Columns' for col in cs]
@@ -624,14 +647,23 @@ class KnxProd:
         self._icons = {}
         self._dpts = None
         self._masks = None
-        # catalog items: (name, application program file id)
+        # catalog items: (name, application program file id). Hardware.xml maps
+        # Hardware2Program -> ApplicationProgramRef(s); ABB lists two programs
+        # (old + new version) under one HP, so an item may appear twice.
+        h2ps = {}
+        try:
+            hw = ET.fromstring(self.zf.read(f'{self.mdir}/Hardware.xml'))
+            for hp in hw.iter(f'{ns}Hardware2Program'):
+                h2ps[hp.get('Id')] = [r.get('RefId') for r in hp.iter(f'{ns}ApplicationProgramRef')]
+        except KeyError:
+            pass
         self.items = []
         for ci in cat.iter(f'{ns}CatalogItem'):
             h2p = ci.get('Hardware2ProgramRefId', '')      # ..._HP-0224-21-C696
             if '_HP-' not in h2p:
                 continue                 # not a programmable catalog entry
-            self.items.append((ci.get('Name'),
-                               f"{self.mdir}_A-{h2p.split('_HP-')[1]}"))
+            apids = h2ps.get(h2p) or [f"{self.mdir}_A-{h2p.split('_HP-')[1]}"]
+            self.items += [(ci.get('Name'), a) for a in apids]
         self.items.sort()
 
     def close(self):

@@ -183,23 +183,31 @@ def device_images(project, dev, base=None, log=None):
     and types; each config byte is rebuilt from the effective flags."""
     prog, corefs, gas, imgs = _image_base(project, dev, base, log)
     ia = ia_int(dev.ia)
-    pairs, active_flags = [], {}
+    pairs, active = [], {}
     for cid, cr, co in _visible_objs(prog, corefs):
-        active_flags[co.number] = _effective_flags(prog, cr)
-        for g in dev.links.get(cid, []):
+        links = dev.links.get(cid, [])
+        active[co.number] = (_effective_flags(prog, cr), bool(links))
+        for g in links:
             pairs.append((gas.index(g) + 1, co.number))
+    # DynamicTableManagement: the tables are packed back to back (see
+    # Mgmt._placement), so they are not padded to the segment size
     if prog.addrtab:
         seg = prog.segments[prog.addrtab[0]]
-        imgs[prog.addrtab[0]] = bytearray(addr_table(ia, gas, seg.size))
+        imgs[prog.addrtab[0]] = bytearray(
+            addr_table(ia, gas, None if prog.dyntab else seg.size))
     if prog.assoctab:
         seg = prog.segments[prog.assoctab[0]]
-        imgs[prog.assoctab[0]] = bytearray(assoc_table(sorted(pairs), seg.size))
+        # ETS orders the pairs by object number (pinned from its own write
+        # to the ESYLUX PD-C180i: (5,0)(1,1)(2,4)(3,9)(4,15)(5,19))
+        pairs.sort(key=lambda p: (p[1], p[0]))
+        imgs[prog.assoctab[0]] = bytearray(
+            assoc_table(pairs, None if prog.dyntab else seg.size))
     if prog.comobjtab:
         seg = prog.segments[prog.comobjtab[0]]
         base_ct = imgs.get(prog.comobjtab[0], seg.data)
         if base_ct is not None:
             imgs[prog.comobjtab[0]] = bytearray(
-                comobj_table(base_ct, active_flags))
+                comobj_table(base_ct, active))
     return {sid: bytes(buf) for sid, buf in imgs.items()}, prog
 
 
@@ -212,56 +220,33 @@ def _effective_flags(prog, coref):
     return ''.join(sorted(s))
 
 
-# Config byte ETS writes for a com-object the parameter config does not use.
-# 0xdb = U|C|W|R, priority 3, TRANSMIT CLEAR — the object stays readable and
-# writable on the bus but never sends. (It is NOT "communication off"; C is set.)
-INACTIVE_CONFIG = 0xdb
-
-def _co_config(flags, prio=3):
-    """Group-object descriptor Config byte (BCU2/BIM112), derived from the
-    object's effective flags. Reverse-engineered from a real ETS-programmed
-    device: b7=U, b6=C, b4=W, b3=R, b2=T (only when not also readable),
-    b1-0=priority. Reproduces CT->0x47, CTUW->0xd7, CRT->0x4b."""
-    c = prio & 0x03
-    if 'U' in flags:
-        c |= 0x80
-    if 'C' in flags:
-        c |= 0x40
-    if 'W' in flags:
-        c |= 0x10
-    if 'R' in flags:
-        c |= 0x08
-    if 'T' in flags and 'R' not in flags:
-        c |= 0x04
-    return c
-
-
-def comobj_table(factory, active_flags):
+def comobj_table(factory, active):
     """Build the com-object table from the factory image. Layout:
     [count:1][ram_flags_ptr:2] then N x [dataptr:2][config:1][type:1]. Data
-    pointers and type bytes are kept from the factory image. Each object's
-    config byte is set from its effective flags if active (in active_flags),
-    else INACTIVE_CONFIG. This reproduces a real ETS table.
+    pointers and type bytes are kept from the factory image. A visible
+    object's config byte comes from its effective flags (_co_config_b: C only
+    when it has a group link); an invisible object keeps the factory config
+    with C cleared. Pinned on the MDT BE-02 (factory 0xdf -> 0xdb, CT linked
+    -> 0x47, CTUW linked -> 0xd7, CRT unlinked -> 0x4b) and the ESYLUX
+    PD-C180i (factory 0x17/0x47 -> 0x13/0x43 invisible, CW linked -> 0x17,
+    CRT linked -> 0x4f, CRT unlinked -> 0x4b).
 
-    Object numbers are 0-based here — the System B table (comobj_table_b) is
-    1-based; both are keyed by ComObject.number for their own family."""
+    active maps object number -> (flags, linked). Object numbers are 0-based
+    here — the System B table (comobj_table_b) is 1-based; both are keyed by
+    ComObject.number for their own family."""
     buf = bytearray(factory)
     count = buf[0]
     if len(buf) < 3 + 4 * count:
         raise ValueError(f'com-object table declares {count} objects but the '
                          f'segment holds {len(buf)} bytes')
     for num in range(count):
-        buf[3 + 4 * num + 2] = (_co_config(active_flags[num])
-                                if num in active_flags else INACTIVE_CONFIG)
+        i = 3 + 4 * num + 2
+        if num in active:
+            buf[i] = _co_config_b(*active[num], prio=buf[i] & 0x03)
+        else:
+            buf[i] &= ~0x04
     return bytes(buf)
 
-
-# ---- System B (mask 07B0 family) -----------------------------------------
-# Tables are 16-bit and synthesized entirely from the project (no factory
-# seed); formats pinned byte-for-byte against an ETS download capture of a
-# real 07B0 device (captures/knx-systemb.pcap, tests/test_sysb.py) and the
-# device-side layout in the thelsing/knx stack (KNX spec 3/5/1 realisation
-# type 6).
 
 def crc16(data, crc=0x1D0F):
     """CRC-16/AUG-CCITT (poly 0x1021, init 0x1D0F): the System B memory
@@ -476,9 +461,10 @@ def app_owned(seg, i):
     knxprod seed over those would clobber per-device data, and comparing them
     on a read-back would report differences nobody can fix.
 
-    Only the BCU1 path consults the mask. The BIM M112 and System B downloads
-    are pinned byte-for-byte against real ETS downloads while writing whole
-    segments, so honouring it there would change verified behaviour."""
+    The BCU1 path writes and compares only these runs; BIM M112 uses
+    written_runs (mask 0xff OR parameter-covered) for its parameter segments;
+    System B is pinned byte-for-byte against real ETS downloads writing whole
+    segments."""
     return seg.mask is None or i >= len(seg.mask) or seg.mask[i] == 0xFF
 
 
@@ -492,6 +478,41 @@ def mask_runs(seg, off, size):
             continue
         j = i
         while j < end and app_owned(seg, j):
+            j += 1
+        runs.append((i, j - i))
+        i = j
+    return runs
+
+
+def written_runs(prog, sid, img):
+    """[(offset, length)] of a BIM M112 config segment ETS actually writes:
+    the bytes a memory-mapped parameter covers plus those the knxprod <Mask>
+    marks 0xff (fixed data). Segments without a <Mask> and the three tables
+    are written whole (the MDT BE-02 pin). Pinned on the ESYLUX PD-C180i:
+    after an ETS download every byte outside this set reads erased (0xff),
+    so writing the seed there is both unverified and unverifiable."""
+    seg = prog.segments[sid]
+    tables = {t[0] for t in (prog.addrtab, prog.assoctab, prog.comobjtab) if t}
+    if seg.mask is None or sid in tables:
+        return [(0, len(img))]
+    own = bytearray(len(img))
+    for i in range(min(len(img), len(seg.mask))):
+        own[i] = seg.mask[i] == 0xFF
+    for p in prog.params.values():
+        t = prog.types.get(p.type_id) if p.mem and p.mem[0] == sid else None
+        if not t or t.bits <= 0:
+            continue
+        start = p.mem[1] * 8 + p.mem[2]
+        for b in range(start // 8, (start + t.bits - 1) // 8 + 1):
+            if b < len(own):
+                own[b] = 1
+    runs, i = [], 0
+    while i < len(own):
+        if not own[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(own) and own[j]:
             j += 1
         runs.append((i, j - i))
         i = j
@@ -701,23 +722,51 @@ def _cover_missing(project, dev, prog, missing):
     return changed
 
 
-def infer_gate_params(project, dev, dev_imgs, log=print):
-    """Recover mem-less gate params (channel modes, module args) from the
-    System B group-object table: ETS gives every VISIBLE object a nonzero
-    descriptor, so the correct gate values are the ones that make the
-    project's visible-object set match the device's active set. Two phases:
-    constraint pass — satisfy the condition path of every active-but-hidden
-    object directly (handles coarse gates like 'extensions fitted' whose flip
-    alone would look worse); then a greedy hill-climb over gate enum values
-    to clear leftover differences. Memory params are re-decoded after each
-    round (visibility shifts what is mapped). Mutates dev.values; returns
-    the final {pref_id: value}."""
-    prog = project.program(dev)
-    active = parse_comobj_table_b(dev_imgs[3])
-    dev.values = decode_params(project, dev, dev_imgs)
+def _active_0705(prog, dev_imgs, linked):
+    """Objects certainly visible on a 0705 device: linked, or a config byte
+    that differs from the invisible value (factory config with C cleared).
+    A visible unlinked object whose flags give that same byte is ambiguous
+    and left out."""
+    seed = prog.segments[prog.comobjtab[0]].data
+    got = dev_imgs[prog.comobjtab[0]]
+    return set(linked) | {i for i in range(seed[0])
+                          if got[3 + 4 * i + 2] != seed[3 + 4 * i + 2] & ~0x04}
 
-    def score():
-        return len(active ^ _visible_nums(project, dev, prog))
+
+def infer_gate_params(project, dev, dev_imgs, links=None, log=print):
+    """Recover mem-less gate params (channel modes, module args) from the
+    group-object table: the correct gate values are the ones that make the
+    project's visible-object set match the device's. System B: ETS gives
+    every VISIBLE object a nonzero descriptor, so the sets are compared
+    directly. BIM M112: the table is rebuilt from the project (comobj_table,
+    with `links` = the device's decoded {number: [ga]}) and the config bytes
+    compared to the device's — ambiguous objects then cost nothing. Two
+    phases: constraint pass — satisfy the condition path of every
+    active-but-hidden object directly (handles coarse gates like 'extensions
+    fitted' whose flip alone would look worse); then a greedy hill-climb over
+    gate enum values to clear leftover differences. Memory params are
+    re-decoded after each round (visibility shifts what is mapped). Mutates
+    dev.values; returns the final {pref_id: value}."""
+    prog = project.program(dev)
+    if prog.mask in Mgmt._SYSTEMB_MASKS:
+        active = parse_comobj_table_b(dev_imgs[3])
+
+        def score():
+            return len(active ^ _visible_nums(project, dev, prog))
+    else:
+        linked = set(links or ())
+        active = _active_0705(prog, dev_imgs, linked)
+        seed = prog.segments[prog.comobjtab[0]].data
+        got = dev_imgs[prog.comobjtab[0]]
+
+        def score():
+            vis = {co.number: (_effective_flags(prog, cr), co.number in linked)
+                   for _, cr, co in _visible_objs(
+                       prog, project.visible_corefs(dev))}
+            want = comobj_table(seed, vis)
+            return sum(want[3 + 4 * i + 2] != got[3 + 4 * i + 2]
+                       for i in range(seed[0]))
+    dev.values = decode_params(project, dev, dev_imgs)
 
     for _ in range(10):
         missing = active - _visible_nums(project, dev, prog)
@@ -756,21 +805,28 @@ def infer_gate_params(project, dev, dev_imgs, log=print):
 
 
 def recover_device(project, dev, dev_imgs, log=print):
-    """decode_device plus inference of mem-less gate params (System B only,
-    needs the group-object table image). The device's current project
-    deviations still seed the decode; a fresh device starts from defaults."""
+    """decode_device plus inference of mem-less gate params (System B and
+    BIM M112, needs the group-object table image). The device's current
+    project deviations still seed the decode; a fresh device starts from
+    defaults."""
     prog = project.program(dev)
-    if prog.mask not in Mgmt._SYSTEMB_MASKS or 3 not in dev_imgs:
-        return decode_device(project, dev, dev_imgs)
+    if prog.mask in Mgmt._SYSTEMB_MASKS:
+        has_table = 3 in dev_imgs
+    elif prog.mask in Mgmt._BIMM112_MASKS:
+        has_table = bool(prog.comobjtab) and prog.comobjtab[0] in dev_imgs
+    else:
+        has_table = False
+    state = decode_device(project, dev, dev_imgs)
+    if not has_table:
+        return state
     saved = dev.values
     try:
         dev.values = dict(saved)
-        params = infer_gate_params(project, dev, dev_imgs, log)
+        state['params'] = infer_gate_params(project, dev, dev_imgs,
+                                            state['links'], log)
     finally:
         dev.values = saved
-    gas = parse_addr_table_b(dev_imgs.get(1, b'\0\0'))
-    pairs = parse_assoc_table_b(dev_imgs.get(2, b'\0\0'))
-    return {'params': params, 'links': links_from_tables(gas, pairs)}
+    return state
 
 
 def _assoc_pairs_0705(prog, dev_imgs, gas):
@@ -1443,8 +1499,18 @@ class Mgmt:
             if not s.addr or not s.is_config:
                 continue
             base = table_base.get(sid, s.addr)
+            if prog.dyntab and sid in (prog.addrtab[0], prog.assoctab[0]):
+                # packed tables: the device's count decides the length, not
+                # the project's (an empty project would read 3 bytes)
+                size = 1 + 2 * c.mem_read_block(base, 1)[0]
+                log(f'read {sid.split("_")[-1]} @{base:#06x} ({size} B)')
+                out[sid] = c.mem_read_block(base, size)
+                continue
             log(f'read {sid.split("_")[-1]} @{base:#06x} ({len(imgs[sid])} B)')
-            out[sid] = c.mem_read_block(base, len(imgs[sid]))
+            got = bytearray(imgs[sid])          # unwritten bytes: don't care
+            for i, n in written_runs(prog, sid, imgs[sid]):
+                got[i:i + n] = c.mem_read_block(base + i, n)
+            out[sid] = bytes(got)
         return out
 
     # -- load-procedure interpreter (knxprod <LoadProcedures> LdCtrl* steps) --
@@ -1470,6 +1536,32 @@ class Mgmt:
             raise RuntimeError(f'LSM {oi} {key} failed '
                                f'({self.LOAD_STATE.get(st, st)})')
 
+    def _alloc(self, c, oi, rec, what, log):
+        """BimM112 additional load control: a 10-byte event-3 record on PID 5
+        (segment allocation, task segment, task pointers). The LSM must stay
+        in Loading. Layouts per bcusdk common/loadimage.cpp — the BCU2 SDK
+        that really programs these; there is no ETS capture of a 0705 download."""
+        c.prop_write(oi, 5, rec)
+        st = c.load_state(oi)
+        log(f'LSM {oi}: {what} {rec.hex()} -> {self.LOAD_STATE.get(st, st)}')
+        if st != 2:
+            raise RuntimeError(f'LSM {oi} {what} refused '
+                               f'({self.LOAD_STATE.get(st, st)})')
+
+    def _placement(self, prog, imgs):
+        """{segment_id: (addr, size)} the download uses. Knxprod values, except
+        DynamicTableManagement: ETS then packs the association table right
+        behind the used address table (the device reports that base in PID 7),
+        both sized to the actual table."""
+        place = {sid: (s.addr, s.size) for sid, s in prog.segments.items() if s.addr}
+        if prog.dyntab and prog.addrtab and prog.assoctab:
+            at, st = prog.addrtab[0], prog.assoctab[0]
+            if at in imgs and st in imgs:
+                base = prog.segments[at].addr
+                place[at] = (base, len(imgs[at]))
+                place[st] = (base + len(imgs[at]), len(imgs[st]))
+        return place
+
     def _run_loadproc(self, c, prog, imgs, log):
         # BimM112 is LoadProcedureStyle="ProductProcedure": the knxprod carries
         # the whole sequence, so procedure() hands back its steps unspliced.
@@ -1477,25 +1569,56 @@ class Mgmt:
         if not steps:                    # would silently "succeed" writing nothing
             raise RuntimeError('knxprod has no load procedure')
         addr2seg = {s.addr: sid for sid, s in prog.segments.items() if s.addr}
-        for tag, a in steps:
-            if tag in ('LdCtrlConnect', 'LdCtrlDisconnect', 'LdCtrlTaskSegment',
-                       'LdCtrlCompareProp'):
+        place = self._placement(prog, imgs)
+        u16 = lambda k: struct.pack('!H', int(a.get(k, 0)))
+        for n, (tag, a) in enumerate(steps):
+            oi = int(a.get('LsmIdx', 0))
+            if tag in ('LdCtrlConnect', 'LdCtrlDisconnect', 'LdCtrlCompareProp'):
                 continue                  # connect/authorize handled in program()
             elif tag == 'LdCtrlUnload':
-                self._load_ctrl(c, int(a['LsmIdx']), 'unload', 0, log)
+                self._load_ctrl(c, oi, 'unload', 0, log)
             elif tag == 'LdCtrlLoad':
-                self._load_ctrl(c, int(a['LsmIdx']), 'load', 2, log)
+                self._load_ctrl(c, oi, 'load', 2, log)
             elif tag == 'LdCtrlLoadCompleted':
-                self._load_ctrl(c, int(a['LsmIdx']), 'completed', 1, log)
+                self._load_ctrl(c, oi, 'completed', 1, log)
             elif tag == 'LdCtrlAbsSegment':
                 sid = addr2seg.get(int(a['Address']))
+                addr, size = place.get(sid, (int(a['Address']), int(a['Size'])))
+                rec = (bytes([3, int(a.get('SegType', 0))]) + struct.pack('!HH', addr, size)
+                       + bytes([int(a.get('Access', 0)), int(a.get('MemType', 0)),
+                                int(a.get('SegFlags', 0)), 0]))
+                self._alloc(c, oi, rec, 'alloc', log)
                 if sid and sid in imgs:            # RAM / unchanged segs: skip
-                    log(f'  write {sid.split("_")[-1]} '
-                        f'@{int(a["Address"]):#06x} ({len(imgs[sid])} B)')
-                    c.mem_write_block(int(a['Address']), imgs[sid])
+                    for i, n in written_runs(prog, sid, imgs[sid]):
+                        log(f'  write {sid.split("_")[-1]} @{addr + i:#06x} ({n} B)')
+                        c.mem_write_block(addr + i, imgs[sid][i:i + n])
+            elif tag == 'LdCtrlTaskSegment':
+                addr = int(a['Address'])
+                sid = addr2seg.get(addr)             # a placed table moved with it
+                addr = place.get(sid, (addr,))[0]
+                rec = (bytes([3, 2]) + struct.pack('!H', addr) + bytes([prog.pei_type])
+                       + struct.pack('!HH', prog.manufacturer, prog.app_number)
+                       + bytes([prog.app_version]))
+                self._alloc(c, oi, rec, 'task segment', log)
+            elif tag == 'LdCtrlTaskPtr':
+                rec = bytes([3, 3]) + u16('InitPtr') + u16('SavePtr') + u16('SerialPtr') + b'\0\0'
+                self._alloc(c, oi, rec, 'task ptr', log)
+            elif tag == 'LdCtrlTaskCtrl1':
+                rec = bytes([3, 4]) + u16('Address') + bytes([int(a.get('Count', 0))]) + bytes(5)
+                self._alloc(c, oi, rec, 'task ctrl1', log)
+            elif tag == 'LdCtrlTaskCtrl2':
+                rec = bytes([3, 5]) + u16('Callback') + u16('Address') + u16('Seg0') + u16('Seg1')
+                self._alloc(c, oi, rec, 'task ctrl2', log)
             elif tag == 'LdCtrlRestart':
                 log('restart')
                 c.restart()
+                # A_Restart drops the transport connection; whatever follows
+                # (the ESYLUX has a TaskSegment+Load on a manufacturer object 5
+                # that has no load state at all) cannot be delivered.
+                rest = [t for t, _ in steps[n + 1:] if t != 'LdCtrlDisconnect']
+                if rest:
+                    log(f'  {len(rest)} step(s) after restart skipped: {", ".join(rest)}')
+                break
             else:
                 raise NotImplementedError(f'unsupported load step {tag}')
 
@@ -1990,15 +2113,16 @@ def unsupported_reason(prog):
     when adding a device, so a project only holds devices we can round-trip
     (program AND read back) without ETS.
 
+    - An ETS plugin (<Extension EtsUiPlugin/EtsDataHandler>): the product is
+      configured by a manufacturer DLL shipped in the knxprod, not by the
+      parameters the XML declares. Nothing to reproduce; blocked for good.
     - Unknown programming model (mask): no download procedure implemented.
     - A BCU1 mask whose product database carries no default load procedure:
       those products describe the download nowhere else, so there is nothing
-      to run.
-    - A load-time device task (LdCtrl TaskCtrl/TaskPtr steps): the device, or
-      the manufacturer's ETS plugin, computes part of the memory image at load
-      time. That logic is not in the knxprod, so the config cannot be
-      reproduced (e.g. ESYLUX presence detectors: ~200 bytes per segment are
-      plugin-computed, not parameter-mapped)."""
+      to run."""
+    if prog.plugin:
+        return (f'the product is configured by a manufacturer ETS plugin '
+                f'({prog.plugin}); its logic is not in the product database')
     if (prog.mask not in Mgmt._BIMM112_MASKS
             and prog.mask not in Mgmt._SYSTEMB_MASKS
             and prog.mask not in Mgmt._BCU1_MASKS):
@@ -2012,8 +2136,4 @@ def unsupported_reason(prog):
             and not prog.procedure('Load', 'all')):
         return (f'{prog.mask}: the product database ships no knx_master.xml '
                 'Load procedure, so the download sequence is unknown')
-    if any('TaskCtrl' in t or 'TaskPtr' in t for t, _ in prog.loadproc):
-        return ('the device computes part of its memory with a load-time task '
-                '(manufacturer ETS plugin); that logic is not in the product '
-                'database, so Baccata cannot program it')
     return None
