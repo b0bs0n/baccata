@@ -1,6 +1,6 @@
 [project]
 name = "baccata"
-version = "0.1.0"
+version = "0.1.1"
 description = "KNX project editor and commissioning tool"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
@@ -32,7 +32,7 @@ packages = ["src/baccata"]
 [tool.briefcase]
 project_name = "Baccata"
 bundle = "org.baccata"
-version = "0.1.0"
+version = "0.1.1"
 url = "https://github.com/b0bs0n/baccata"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]

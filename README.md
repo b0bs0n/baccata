@@ -13,6 +13,12 @@ interface, and manage KNX Data Secure keys.
 
 ![Baccata screenshot](docs/screenshot.png)
 
+## Device support
+
+[Which KNX devices Baccata can program](https://b0bs0n.github.io/baccata/) — every
+product in the databases I have, checked offline against the current code, with the
+reason for anything not supported.
+
 ## Run from source
 
 Needs Python 3.12+ and [uv](https://docs.astral.sh/uv/).
@@ -23,7 +29,7 @@ uv run baccata
 
 ## Binaries
 
-Packaged builds for macOS, Windows and Linux are attached to
+Packaged builds for macOS and Windows are attached to
 [Releases](https://github.com/b0bs0n/baccata/releases). They are built with
 [briefcase](https://briefcase.readthedocs.io/) by the GitHub workflow in
 `.github/workflows/package.yml`.

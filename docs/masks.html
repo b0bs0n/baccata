@@ -1,0 +1,55 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width"><title>Baccata – programming models</title><style>
+body{font:15px/1.45 system-ui,sans-serif;margin:0 auto;padding:1em 2em;max-width:1200px;color:#222;background:#fff}
+h1{margin-bottom:0}.sub{color:#666;margin-top:.2em}
+nav a{margin-right:1.2em}nav{margin:.6em 0 1.4em}
+.kpi{display:flex;gap:1em;flex-wrap:wrap;margin:1.2em 0}
+.kpi div{border:1px solid #ddd;border-radius:6px;padding:.6em 1em;min-width:8em}
+.kpi b{display:block;font-size:1.6em}
+table{border-collapse:collapse;width:100%;margin:1em 0}
+th,td{border-bottom:1px solid #eee;padding:.3em .6em;text-align:left;white-space:nowrap;vertical-align:top}
+th{background:#f6f6f6;position:sticky;top:0}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+td.w{white-space:normal}
+.bar{display:inline-block;height:.8em;vertical-align:middle}
+.tested{background:#2a7}.supported{background:#8d8}.not-yet{background:#ea3}
+.plugin{background:#c33}.fail{background:#a3c}.unswept{background:#ccc}
+.tag{display:inline-block;padding:0 .5em;border-radius:3px;font-size:.85em;color:#000}
+.tag.plugin,.tag.tested,.tag.fail{color:#fff}
+dl.legend dt{font-weight:bold;margin-top:.5em}dl.legend dd{margin:0 0 0 1em}
+input[type=search]{font:inherit;padding:.4em .6em;width:24em;max-width:100%}
+.hidden{display:none}
+details{margin:1em 0}summary{cursor:pointer;font-weight:bold}
+code{font-size:.9em}
+</style><nav><a href="index.html">Overview</a><a href="products.html">Product search</a><a href="masks.html">By programming model</a><a href="https://github.com/b0bs0n/baccata">Baccata on GitHub</a></nav><h1>By programming model</h1>
+<p class=sub>The mask version names the device's system software, and with it the download procedure. Baccata dispatches on it.</p>
+<table><tr><th>mask<th>model<th>programs<th>bus-tested<th>supported<th>not yet<th>plugin<th>fails<th></tr>
+<tr><td><code>MV-07B0</code><td>SystemB<td class=n>2041<td class=n>5<td class=n>1989<td class=n><td class=n>47<td class=n><td style="width:20%"><span class="bar tested" style="width:0%"></span><span class="bar supported" style="width:97%"></span><span class="bar plugin" style="width:2%"></span></tr>
+<tr><td><code>MV-0701</code><td>BimM112<td class=n>1049<td class=n><td class=n>786<td class=n><td class=n>263<td class=n><td style="width:20%"><span class="bar supported" style="width:75%"></span><span class="bar plugin" style="width:25%"></span></tr>
+<tr><td><code>MV-0705</code><td>BimM112<td class=n>543<td class=n>3<td class=n>518<td class=n><td class=n>22<td class=n><td style="width:20%"><span class="bar tested" style="width:1%"></span><span class="bar supported" style="width:95%"></span><span class="bar plugin" style="width:4%"></span></tr>
+<tr><td><code>MV-0012</code><td>Bcu1<td class=n>155<td class=n><td class=n>125<td class=n><td class=n>30<td class=n><td style="width:20%"><span class="bar supported" style="width:81%"></span><span class="bar plugin" style="width:19%"></span></tr>
+<tr><td><code>MV-0021</code><td>Bcu2<td class=n>142<td class=n><td class=n><td class=n>142<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>MV-0010</code><td>Bcu1<td class=n>122<td class=n><td class=n>122<td class=n><td class=n><td class=n><td style="width:20%"><span class="bar supported" style="width:100%"></span></tr>
+<tr><td><code>MV-0011</code><td>Bcu1<td class=n>103<td class=n><td class=n>103<td class=n><td class=n><td class=n><td style="width:20%"><span class="bar supported" style="width:100%"></span></tr>
+<tr><td><code>MV-27B0</code><td>SystemB<td class=n>77<td class=n><td class=n>77<td class=n><td class=n><td class=n><td style="width:20%"><span class="bar supported" style="width:100%"></span></tr>
+<tr><td><code>MV-0912</code><td>Bcu1<td class=n>66<td class=n><td class=n><td class=n>66<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>MV-091A</code><td>Bcu1<td class=n>45<td class=n><td class=n><td class=n>45<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>?</code><td><td class=n>39<td class=n><td class=n>37<td class=n>2<td class=n><td class=n><td style="width:20%"><span class="bar supported" style="width:95%"></span><span class="bar not-yet" style="width:5%"></span></tr>
+<tr><td><code>MV-2920</code><td>SystemB<td class=n>35<td class=n><td class=n>35<td class=n><td class=n><td class=n><td style="width:20%"><span class="bar supported" style="width:100%"></span></tr>
+<tr><td><code>MV-0025</code><td>Bcu2<td class=n>27<td class=n><td class=n><td class=n>26<td class=n>1<td class=n><td style="width:20%"><span class="bar not-yet" style="width:96%"></span><span class="bar plugin" style="width:4%"></span></tr>
+<tr><td><code>MV-2705</code><td>BimM112<td class=n>26<td class=n><td class=n>26<td class=n><td class=n><td class=n><td style="width:20%"><span class="bar supported" style="width:100%"></span></tr>
+<tr><td><code>MV-0001</code><td>None<td class=n>24<td class=n><td class=n><td class=n>24<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>MV-0300</code><td>PropertyBased<td class=n>22<td class=n><td class=n><td class=n>22<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>MV-0300-01000000000000000000</code><td>PropertyBased<td class=n>18<td class=n><td class=n><td class=n>18<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>MV-57B0</code><td>SystemB<td class=n>12<td class=n><td class=n>12<td class=n><td class=n><td class=n><td style="width:20%"><span class="bar supported" style="width:100%"></span></tr>
+<tr><td><code>MV-0300-01000001000000000000</code><td>PropertyBased<td class=n>11<td class=n><td class=n><td class=n>11<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>MV-0020</code><td>Bcu2<td class=n>8<td class=n><td class=n><td class=n>4<td class=n>4<td class=n><td style="width:20%"><span class="bar not-yet" style="width:50%"></span><span class="bar plugin" style="width:50%"></span></tr>
+<tr><td><code>MV-6800</code><td>None<td class=n>5<td class=n><td class=n><td class=n>5<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>MV-0911</code><td>Bcu1<td class=n>4<td class=n><td class=n><td class=n>4<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>MV-6900</code><td>None<td class=n>1<td class=n><td class=n><td class=n>1<td class=n><td class=n><td style="width:20%"><span class="bar not-yet" style="width:100%"></span></tr>
+<tr><td><code>MV-0700</code><td>BimM112<td class=n>1<td class=n><td class=n>1<td class=n><td class=n><td class=n><td style="width:20%"><span class="bar supported" style="width:100%"></span></tr>
+</table><h2>Bus-tested devices</h2><table><tr><th>app<th>note</tr>
+<tr><td><code>M-0008_A-20DC</code><td>Gira Schaltaktor 24f/Jalousie 12f, recovered + verified</tr>
+<tr><td><code>M-0048_A-7315</code><td>Theben Cheops S, verify matches</tr>
+<tr><td><code>M-0083_A-00B6</code><td>MDT BE-02, verify matches</tr>
+<tr><td><code>M-0080_A-7018</code><td>ESYLUX PD-C180i KNX ECO, TaskSegment/TaskCtrl1 + dynamic tables, param change programmed + verified, sparse write</tr>
+</table>

@@ -1,0 +1,34 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width"><title>Lunatone – Baccata</title><style>
+body{font:15px/1.45 system-ui,sans-serif;margin:0 auto;padding:1em 2em;max-width:1200px;color:#222;background:#fff}
+h1{margin-bottom:0}.sub{color:#666;margin-top:.2em}
+nav a{margin-right:1.2em}nav{margin:.6em 0 1.4em}
+.kpi{display:flex;gap:1em;flex-wrap:wrap;margin:1.2em 0}
+.kpi div{border:1px solid #ddd;border-radius:6px;padding:.6em 1em;min-width:8em}
+.kpi b{display:block;font-size:1.6em}
+table{border-collapse:collapse;width:100%;margin:1em 0}
+th,td{border-bottom:1px solid #eee;padding:.3em .6em;text-align:left;white-space:nowrap;vertical-align:top}
+th{background:#f6f6f6;position:sticky;top:0}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+td.w{white-space:normal}
+.bar{display:inline-block;height:.8em;vertical-align:middle}
+.tested{background:#2a7}.supported{background:#8d8}.not-yet{background:#ea3}
+.plugin{background:#c33}.fail{background:#a3c}.unswept{background:#ccc}
+.tag{display:inline-block;padding:0 .5em;border-radius:3px;font-size:.85em;color:#000}
+.tag.plugin,.tag.tested,.tag.fail{color:#fff}
+dl.legend dt{font-weight:bold;margin-top:.5em}dl.legend dd{margin:0 0 0 1em}
+input[type=search]{font:inherit;padding:.4em .6em;width:24em;max-width:100%}
+.hidden{display:none}
+details{margin:1em 0}summary{cursor:pointer;font-weight:bold}
+code{font-size:.9em}
+</style><nav><a href="../index.html">Overview</a><a href="../products.html">Product search</a><a href="../masks.html">By programming model</a><a href="https://github.com/b0bs0n/baccata">Baccata on GitHub</a></nav><h1>Lunatone</h1>
+<p class=sub>1 products, 1 application programs. 1 supported</p>
+<p><span class="bar supported" style="width:100%"></span></p>
+<p><input type=search placeholder="filter"> <select id=st><option value="">all statuses<option value=tested>bus-tested<option value=supported>supported<option value=not-yet>not yet<option value=plugin>needs ETS plugin<option value=fail>parser fails<option value=unswept>unswept</select></p>
+<table><thead><tr><th>manufacturer<th>product<th>order no.<th>program<th>mask<th>status<th>why</tr></thead><tbody>
+<tr><td>Lunatone<td class=w>KNX-DALI-2 Gateway<td>89453899<td><code>A-0805-14-FB0</code><td><code>MV-07B0</code> <small>SystemB</small><td><span class="tag supported">supported</span><td class=w><small></small></tr>
+</tbody></table><script>
+const q=document.querySelector('input[type=search]'),st=document.querySelector('#st'),rows=[...document.querySelectorAll('tbody tr')];
+function f(){const w=q.value.toLowerCase().split(/\s+/).filter(Boolean),c=st.value;
+for(const r of rows){const t=r.textContent.toLowerCase();r.classList.toggle('hidden',(c&&!r.querySelector('.tag.'+c))||!w.every(x=>t.includes(x)))}}
+q.addEventListener('input',f);st.addEventListener('change',f);
+</script>
