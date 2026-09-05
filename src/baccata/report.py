@@ -14,7 +14,8 @@ from . import __version__ as VERSION
 from .knxip import ga_str
 
 REPO = 'https://github.com/b0bs0n/baccata'
-URL_MAX = 6000            # beyond this the body rides on the clipboard
+URL_MAX = 8000            # GitHub's limit is ~8 KB; beyond it the body
+                          # rides on the clipboard
 
 
 def program_sha256(project, dev):
@@ -87,7 +88,8 @@ def verify_report(project, dev, result, conn=None):
         head.append(f'- {seg["id"]}: {"ok" if seg["match"] else "differs"}'
                     + (f' ({seg["diff_count"]} byte(s))'
                        if seg['diff_count'] else ''))
-    body = '\n'.join(head) + '\n\n```json\n' + json.dumps(d, indent=1) + '\n```\n'
+    body = ('\n'.join(head) + '\n\n```json\n'         # compact: it travels in a URL
+            + json.dumps(d, separators=(',', ':')) + '\n```\n')
     return title, body
 
 
