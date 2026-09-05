@@ -86,6 +86,7 @@ class KnxProj:
         pinfo = files.get('project.xml') or files.get('Project.xml')
         self.proj_root = ET.fromstring(pinfo) if pinfo else None
         self.ns = _ns(self.root)
+        self.tool_version = self.root.get('ToolVersion', '')
 
     def _project_files(self, password):
         """{'0.xml': bytes, 'project.xml': bytes}."""
@@ -132,7 +133,7 @@ class KnxProj:
 
     def hardware(self):
         """From every Hardware.xml: {Hardware2Program id: [apid]} and
-        {product id: product text}."""
+        {product id: (product text, order number)}."""
         h2p, products = {}, {}
         for mdir in self.mdirs:
             try:
@@ -144,7 +145,8 @@ class KnxProj:
                 h2p[hp.get('Id')] = [r.get('RefId') for r in
                                      hp.iter(f'{ns}ApplicationProgramRef')]
             for p in hw.iter(f'{ns}Product'):
-                products[p.get('Id')] = p.get('Text', '')
+                products[p.get('Id')] = (p.get('Text', ''),
+                                         p.get('OrderNumber', ''))
         return h2p, products
 
     def program_type(self, apid):
@@ -287,14 +289,24 @@ def _device(project, kp, di, ia, did, h2p, products, prodfile, ga_by_tail,
         apid = next((a for a in cands
                      if kp.program_type(a) == 'ApplicationProgram'),
                     cands[0] if cands else '')
-    name = di.get('Name') or products.get(di.get('ProductRefId', ''), '') \
-        or f'Device {did}'
+    ptext, order_no = products.get(di.get('ProductRefId', ''), ('', ''))
+    name = di.get('Name') or ptext or f'Device {did}'
     mdir = apid.split('_')[0] if apid else ''
     product = prodfile.get(mdir, '') if kp.program_type(apid) else ''
     dev = Device({'id': did, 'name': name, 'product': product,
                   'variant': apid, 'ia': ia})
     dev.tags = loc_tags.get(di.get('Id'), [])
     dev.info['ets_id'] = di.get('Id')
+    if ptext:
+        dev.info['product'] = ptext
+    if order_no:
+        dev.info['order_no'] = order_no
+    # provenance for a verify report: the ETS build, whether ETS says the
+    # program is on the device, and whether the project changed since
+    dev.info['ets'] = {
+        'tool': kp.tool_version,
+        'loaded': di.get('ApplicationProgramLoaded') == 'true',
+        'drift': (di.get('LastModified', '') > di.get('LastDownload', ''))}
     if di.get('Comment') or di.get('Description'):
         dev.info['comment'] = di.get('Comment') or di.get('Description')
     if di.get('LastDownload'):

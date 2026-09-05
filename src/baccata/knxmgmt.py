@@ -7,6 +7,7 @@ shipped segment data). The Mgmt/Conn classes run point-to-point device
 management (T_Connect, memory/property/descriptor services) over any TunnelClient.
 """
 import queue, struct, time
+from dataclasses import dataclass, field
 
 from .knxip import (cemi_ldata, dpt9_value, dpt9_word, ga_str, ia_int, ia_str,
                    A_PROP_READ, A_PROP_RESP, A_PROP_WRITE, A_RESTART)
@@ -876,30 +877,41 @@ def decode_device(project, dev, dev_imgs):
             'links': links_from_tables(gas, pairs)}
 
 
-def diff_report(project, dev, state, log):
-    """Log the semantic differences between decoded device `state` and the
-    project: group links per com-object, then parameter values. Params only
-    visible on one side are gated by a differing value that is itself
-    reported, so only prefs visible on both sides are compared."""
+def semantic_diff(project, dev, state):
+    """Decoded device `state` against the project: ({comobj number:
+    (device gas, project gas)}, {pref id: (device value, project value)}).
+    Params only visible on one side are gated by a differing value that is
+    itself reported, so only prefs visible on both sides are compared."""
     prog = project.program(dev)
     mine = project_links(project, dev)
-    names = {co.number: co.text for co in prog.comobjs.values()}
-    n = 0
+    links = {}
     for num in sorted(set(state['links']) | set(mine)):
         d, p = state['links'].get(num, []), mine.get(num, [])
         if d != p:
-            log(f'  obj {num} "{names.get(num, "?")}": device '
-                f'{" ".join(map(ga_str, d)) or "-"}, project '
-                f'{" ".join(map(ga_str, p)) or "-"}')
-            n += 1
+            links[num] = (d, p)
     proj_par = {r: dev.values.get(r, prog.default(r))
                 for r in project.visible_prefs(dev) if _mem_pref(prog, r)}
-    for r in sorted(set(state['params']) & set(proj_par)):
-        if not _val_eq(state['params'][r], proj_par[r]):
-            pr = prog.prefs[r]
-            log(f'  param {pr.text or prog.params[pr.param_id].text}: '
-                f'device {state["params"][r]}, project {proj_par[r]}')
-            n += 1
+    params = {r: (state['params'][r], proj_par[r])
+              for r in sorted(set(state['params']) & set(proj_par))
+              if not _val_eq(state['params'][r], proj_par[r])}
+    return links, params
+
+
+def diff_report(project, dev, state, log):
+    """Log the semantic differences (semantic_diff): group links per
+    com-object, then parameter values. Returns their count."""
+    prog = project.program(dev)
+    names = {co.number: co.text for co in prog.comobjs.values()}
+    links, params = semantic_diff(project, dev, state)
+    for num, (d, p) in links.items():
+        log(f'  obj {num} "{names.get(num, "?")}": device '
+            f'{" ".join(map(ga_str, d)) or "-"}, project '
+            f'{" ".join(map(ga_str, p)) or "-"}')
+    for r, (d, p) in params.items():
+        pr = prog.prefs[r]
+        log(f'  param {pr.text or prog.params[pr.param_id].text}: '
+            f'device {d}, project {p}')
+    n = len(links) + len(params)
     log(f'{n} difference(s)')
     return n
 
@@ -966,6 +978,44 @@ def _apci_match(got, want):
     return (got & 0x3C0) == (want & 0x3C0)
 
 
+def _segment_report(imgs, dev_imgs, bad, mcbs=None):
+    """Per-segment numbers for a VerifyResult: lengths, CRC16s (System B
+    without a read-back: the device's MCB CRCs), the first byte diffs."""
+    out = []
+    for k in sorted(imgs):
+        a, b = imgs[k], dev_imgs.get(k)
+        seg = {'id': f'LSM {k}' if isinstance(k, int) else
+               f'segment {k.split("_")[-1]}',
+               'proj_len': len(a), 'proj_crc16': crc16(a),
+               'dev_len': None, 'dev_crc16': None,
+               'match': k not in bad, 'diff_count': 0, 'first_diffs': []}
+        if b is not None:
+            seg['dev_len'], seg['dev_crc16'] = len(b), crc16(b)
+            offs = [i for i in range(min(len(a), len(b))) if a[i] != b[i]]
+            seg['diff_count'] = len(offs) + abs(len(a) - len(b))
+            seg['first_diffs'] = [(o, a[o], b[o]) for o in offs[:8]]
+        elif mcbs and k in mcbs:
+            seg['dev_len'] = sum(l for l, _, _ in mcbs[k])
+            seg['dev_crc16'] = [cc for _, _, cc in mcbs[k]]
+        out.append(seg)
+    return out
+
+
+@dataclass
+class VerifyResult:
+    """What Mgmt.verify found, in numbers and ids only — the part of a verify
+    that may leave the machine as a report (no names, addresses, values)."""
+    outcome: str = 'error'          # match | mismatch | error
+    error: str = ''                 # the exception's message on error
+    descriptor: str = ''            # mask read from the device (hex)
+    app_id_ok: bool | None = None   # System B PID 13 == knxprod (None: n/a)
+    # per LSM / segment: {id, proj_len, dev_len, proj_crc16, dev_crc16,
+    # match, diff_count, first_diffs: [(offset, proj, dev)] (<= 8)}
+    segments: list = field(default_factory=list)
+    params_differ: list = field(default_factory=list)   # pref ids
+    links_differ: list = field(default_factory=list)    # com-object numbers
+
+
 class Mgmt:
     """Device management over a connected TunnelClient. Installs a raw_hook to
     capture broadcast + individually-addressed telegrams into a queue; call
@@ -975,6 +1025,9 @@ class Mgmt:
         self.bus = bus
         self.q = queue.Queue()
         self.cancelled = lambda: False   # polled in wait(); raises Cancelled
+        self.last_verify = None          # VerifyResult of the last verify()
+        self._descriptor = ''            # last _open's device descriptor
+        self._mcbs = {}                  # last _check_sysb's MCBs per LSM
         self._prev_hook = bus.raw_hook
         bus.raw_hook = self._hook
 
@@ -1244,6 +1297,7 @@ class Mgmt:
         c = self.connect(ia_int(dev.ia), sec=sec, co=not prog.tunnels)
         try:
             d = c.descriptor()
+            self._descriptor = d.hex()
             if d.hex() != prog.mask[3:].lower():
                 raise RuntimeError(f'device mask {d.hex()} does not match '
                                    f'the knxprod ({prog.mask})')
@@ -1318,16 +1372,30 @@ class Mgmt:
         writing anything (no restart, tunnel stays up). Fast path: System B
         compares the PID 27 MCB length+CRC per LSM, 0705 reads the segments
         back; on any difference the memory is read and a semantic diff
-        (links + params) is logged. Returns True when the device matches."""
+        (links + params) is logged. Returns True when the device matches;
+        self.last_verify holds the VerifyResult either way (also on error)."""
+        self.last_verify = res = VerifyResult()
+        self._descriptor = ''
+        try:
+            return self._verify(project, dev, res, log)
+        except BaseException as e:
+            res.outcome, res.error = 'error', str(e) or type(e).__name__
+            res.descriptor = self._descriptor
+            raise
+
+    def _verify(self, project, dev, res, log):
         imgs, prog = self._build_images(project, dev, log)
+        self._mcbs = {}
         c = self._open(dev, prog, log)
+        res.descriptor = self._descriptor
+        dev_imgs, bad = {}, []
         try:
             if prog.mask in self._SYSTEMB_MASKS:
                 self._check_app_b(c, prog, sorted(imgs))
-                if not self._check_sysb(c, imgs, log):
-                    log('device matches the project')
-                    return True
-                dev_imgs = self._read_sysb(c, sorted(imgs), log)
+                res.app_id_ok = True
+                bad = self._check_sysb(c, imgs, log)
+                if bad:
+                    dev_imgs = self._read_sysb(c, sorted(imgs), log)
             else:
                 dev_imgs = self._read_mem(c, prog, imgs, log)
                 if not dev_imgs:     # nothing comparable: never call that a match
@@ -1338,29 +1406,32 @@ class Mgmt:
                 for sid in sorted(dev_imgs):
                     log(f'segment {sid.split("_")[-1]}: '
                         f'{"MISMATCH" if sid in bad else "ok"}')
-                if not bad:
-                    log('device matches the project')
-                    return True
         finally:
             c.disconnect()
+        res.segments = _segment_report(imgs, dev_imgs, bad, self._mcbs)
+        if not bad:
+            res.outcome = 'match'
+            log('device matches the project')
+            return True
+        res.outcome = 'mismatch'
+        links, params = semantic_diff(project, dev,
+                                      decode_device(project, dev, dev_imgs))
+        res.links_differ, res.params_differ = sorted(links), sorted(params)
         if not diff_report(project, dev, decode_device(project, dev, dev_imgs),
                            log):
             # nothing attributable: show the raw byte diffs (typically param
             # bytes under branches gated by mem-less params — invisible to
             # the semantic decode on both sides)
-            for k in sorted(dev_imgs):
-                a, b = imgs.get(k), dev_imgs[k]
-                if a is None or a == b:
+            for seg in res.segments:
+                if seg['match'] or not seg['first_diffs']:
                     continue
-                offs = [i for i in range(min(len(a), len(b)))
-                        if a[i] != b[i]]
-                name = (f'LSM {k}' if isinstance(k, int)
-                        else f'segment {k.split("_")[-1]}')
-                if len(a) != len(b):
-                    name += f' (size dev {len(b)}/proj {len(a)})'
-                log(f'  {name}: {len(offs)} byte(s) differ: ' + ' '.join(
-                    f'@{o:#06x} dev {b[o]:02x} proj {a[o]:02x}'
-                    for o in offs[:8]) + (' …' if len(offs) > 8 else ''))
+                name = seg['id']
+                if seg['dev_len'] != seg['proj_len']:
+                    name += f' (size dev {seg["dev_len"]}/proj {seg["proj_len"]})'
+                log(f'  {name}: {seg["diff_count"]} byte(s) differ: ' + ' '.join(
+                    f'@{o:#06x} dev {b:02x} proj {a:02x}'
+                    for o, a, b in seg['first_diffs'])
+                    + (' …' if seg['diff_count'] > 8 else ''))
         return False
 
     def read_device(self, project, dev, log=print):
@@ -1436,6 +1507,7 @@ class Mgmt:
         """Fast System B compare: load state + MCB length/CRC per LSM against
         the built images, no memory read. Returns the mismatched LSMs."""
         bad = []
+        self._mcbs = {}                  # oi -> [(len, flags, crc)] for verify
         for oi in sorted(imgs):
             st = c.load_state(oi)
             if st != 1:
@@ -1443,6 +1515,7 @@ class Mgmt:
                 bad.append(oi)
                 continue
             mcbs = self._sysb_mcbs(c, oi)
+            self._mcbs[oi] = mcbs
             img, off, diff = imgs[oi], 0, False
             if sum(l for l, _, _ in mcbs) != len(img):
                 diff = True

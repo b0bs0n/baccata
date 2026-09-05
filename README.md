@@ -18,7 +18,8 @@ holds, and manage KNX Data Secure keys.
 
 [Which KNX devices Baccata can program](https://b0bs0n.github.io/baccata/) — every
 product in the databases I have, checked offline against the current code, with the
-reason for anything not supported.
+reason for anything not supported. *Verify* a device, then *Report…*: the issue it
+files (ids and checksums only) updates that page.
 
 ## Run from source
 

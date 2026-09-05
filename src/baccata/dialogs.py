@@ -1,14 +1,16 @@
 """Popup dialogs: add device, tag editor, GA assignment, bulk GA add."""
 import contextlib, fnmatch, sys
-from PySide6.QtCore import QEvent, QStandardPaths, Qt, QTimer
-from PySide6.QtGui import QCursor, QImage, QKeySequence, QPalette, QShortcut
+from pathlib import Path
+from PySide6.QtCore import QEvent, QStandardPaths, Qt, QTimer, QUrl
+from PySide6.QtGui import (QCursor, QDesktopServices, QImage, QKeySequence,
+                           QPalette, QShortcut)
 from PySide6.QtMultimedia import QCamera, QMediaCaptureSession, QMediaDevices
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMessageBox, QPushButton, QSpinBox, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout)
+    QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
+    QTreeWidget, QTreeWidgetItem, QVBoxLayout)
 
 from . import knxip
 from .keymap import bridge, button, escape_to, vim_arrows
@@ -833,3 +835,53 @@ class ScanQrDialog(QDialog):
         if self.camera:
             self.camera.stop()
         super().done(r)
+
+
+class ReportDialog(QDialog):
+    """A verify report: read it, copy it, file it as a GitHub issue. `url`
+    is the prefilled new-issue link (report.github_issue_url)."""
+
+    def __init__(self, parent, text, url):
+        super().__init__(parent)
+        self.setWindowTitle('Verify report')
+        self.resize(640, 480)
+        self.text, self.url = text, url
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel('Ids and numbers only — nothing from your '
+                             'installation.'))
+        self.view = QPlainTextEdit(text, readOnly=True)
+        lay.addWidget(self.view)
+        self.note = QLabel('')
+        lay.addWidget(self.note)
+        row = QHBoxLayout()
+        for label, fn in (('Copy', self.copy), ('Save…', self.save),
+                          ('File on GitHub…', self.file)):
+            b = QPushButton(label)
+            b.clicked.connect(fn)
+            b.setAutoDefault(False)
+            row.addWidget(b)
+        row.addStretch(1)
+        close = QPushButton('Close')
+        close.clicked.connect(self.accept)
+        close.setDefault(True)
+        row.addWidget(close)
+        lay.addLayout(row)
+        escape_to(close, self.view)
+
+    def copy(self):
+        QApplication.clipboard().setText(self.text)
+        self.note.setText('Copied.')
+
+    def save(self):
+        home = QStandardPaths.writableLocation(QStandardPaths.HomeLocation)
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Save report', str(Path(home) / 'verify-report.md'),
+            'Markdown (*.md)')
+        if path:
+            Path(path).write_text(self.text)
+            self.note.setText(f'Saved {path}')
+
+    def file(self):
+        self.copy()
+        self.note.setText('Copied. If the form is empty, paste it.')
+        QDesktopServices.openUrl(QUrl(self.url))

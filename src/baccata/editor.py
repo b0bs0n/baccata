@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from .keymap import (bridge, button, cheatsheet, escape_to, focus_field,
                      keyboard_cursor, native)
 from .dialogs import (AddDeviceDialog, AddGaDialog, BulkGaDialog,
-                     ConnectionDialog, LinkDialog, ScanQrDialog, TagDialog,
+                     ConnectionDialog, LinkDialog, ReportDialog, ScanQrDialog, TagDialog,
                      ask, busy, info, password_edit, set_passwords_shown, warn)
 from .knxip import (decode_dpt, dpt_small, encode_dpt, ia_str, ia_int,
                    ia_parts, _dpt_main)
@@ -285,8 +285,9 @@ class MgmtDialog(QDialog):
     done = Signal(str)                   # error message, '' on success
 
     def __init__(self, parent, title, bus, make_bus, task, done_msg,
-                 cancellable=False, tries=1):
+                 cancellable=False, tries=1, on_report=None):
         super().__init__(parent)
+        self.on_report = on_report       # Report… after the run (not cancelled)
         self.setWindowTitle(title)
         self.resize(560, 360)
         self.running = True
@@ -299,9 +300,16 @@ class MgmtDialog(QDialog):
         self.btn = QPushButton('Cancel' if cancellable else 'Close')
         self.btn.setEnabled(cancellable)
         self.btn.clicked.connect(self.btn_clicked)
+        self.report_btn = QPushButton('Report…')
+        self.report_btn.hide()
+        self.report_btn.clicked.connect(lambda: self.on_report(self))
         lay = QVBoxLayout(self)
         lay.addWidget(self.log)
-        lay.addWidget(self.btn)
+        row = QHBoxLayout()
+        row.addWidget(self.report_btn)
+        row.addStretch(1)
+        row.addWidget(self.btn)
+        lay.addLayout(row)
         self.line.connect(self.append)
         self.done.connect(self.finish)
         self.loop = QEventLoop(self)
@@ -398,6 +406,8 @@ class MgmtDialog(QDialog):
                 '— wait, then retry')
         self.btn.setText('Close')
         self.btn.setEnabled(True)
+        if self.on_report and err != 'cancelled':
+            self.report_btn.show()
         self.btn.setDefault(True)        # Enter closes once the task is done
         self.btn.setFocus()
 
@@ -1923,7 +1933,7 @@ class Editor(QMainWindow):
         return c or {}
 
     def run_mgmt(self, title, task, done_msg, cancellable=False, tries=1,
-                 write=False):
+                 write=False, on_report=None):
         """Run task(mgmt, dlg) in a MgmtDialog. Borrows the live monitor bus
         if it matches the selected connection (and leaves it up), else opens
         one from the active connection config. The mgmt task owns the bus via
@@ -1958,7 +1968,8 @@ class Editor(QMainWindow):
             self._undo.clear()
             self._redo.clear()
         dlg = MgmtDialog(self, title, bus, lambda: make_bus(c),
-                         task, done_msg, cancellable=cancellable, tries=tries)
+                         task, done_msg, cancellable=cancellable, tries=tries,
+                         on_report=on_report)
         self._task = self._last_dlg = dlg
         self._task_lock(True)
         if self.bus and bus is None:
@@ -2019,10 +2030,26 @@ class Editor(QMainWindow):
         nothing is written). Differences are logged semantically."""
         if not self.dev or not self.dev.ia:
             return
-        self.run_mgmt(f'Verify {self.dev.name} ({self.dev.ia})',
-                      lambda m, d: m.verify(self.proj, self.dev,
-                                            log=d.line.emit),
-                      'DONE.', cancellable=True)
+        dev, res = self.dev, {}
+
+        def task(m, d):
+            try:
+                m.verify(self.proj, dev, log=d.line.emit)
+            finally:
+                res['result'] = m.last_verify
+        self.run_mgmt(f'Verify {dev.name} ({dev.ia})', task, 'DONE.',
+                      cancellable=True,
+                      on_report=lambda dlg: self.show_report(dev, res, dlg))
+
+    def show_report(self, dev, res, dlg):
+        """The verify report for `dev` (res['result'] from the task, or an
+        error-only one when the connection failed before it ran)."""
+        from . import report
+        from .knxmgmt import VerifyResult
+        result = res.get('result') or VerifyResult(error=dlg.err or '')
+        title, body = report.verify_report(self.proj, dev, result,
+                                           self.proj.connection())
+        ReportDialog(self, body, report.github_issue_url(title, body)).exec()
 
     def read_device_state(self):
         """Read the device's programmed state and, on confirm, import it

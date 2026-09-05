@@ -1,0 +1,17 @@
+name: Verify report
+description: Filed from Baccata after Verify. Ids and numbers only.
+title: "Verify: "
+labels: [verify-report]
+body:
+  - type: textarea
+    id: report
+    attributes:
+      label: Report
+      description: Pasted by Baccata. If empty, paste it from the clipboard.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Optional.

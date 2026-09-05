@@ -83,11 +83,12 @@ code{font-size:.9em}
 <h2 id=help>How to help</h2>
 <p>Everything above comes from product databases and offline checks. What moves a device
 from "supported" to "bus-tested", or from "not yet" to "supported", is evidence from real
-hardware. Open an <a href="https://github.com/b0bs0n/baccata/issues">issue</a> with any of these:</p>
+hardware:</p>
 <ul>
-<li><b>Try a "supported" device.</b> Program it with Baccata, then <i>Verify</i> (reads the
-device back and compares). Report the product, its order number and whether verify matched.
-A mismatch with the read-back attached is as useful as a match.</li>
+<li><b>Verify a device.</b> In Baccata, <i>Import…</i> your ETS project (or add the device),
+<i>Verify</i> it (read-only), then <i>Report…</i> — it files an
+<a href="https://github.com/b0bs0n/baccata/issues?q=label%3Averify-report">issue</a> with ids and checksums only, and this
+page updates itself. A mismatch is as useful as a match.</li>
 <li><b>A packet capture of ETS programming a device.</b> Every model in Baccata was built
 from one: run Wireshark on the KNX/IP tunnel while ETS does a full download, and attach the
 <code>.pcapng</code> plus the ETS project export (<code>.knxproj</code>). The capture pins
