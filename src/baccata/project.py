@@ -4,7 +4,8 @@ Devices are a plain list with arbitrary tags. Group addresses are stored as
 16-bit ints, displayed 3-level (main/middle/sub). Device parameter values
 store only deviations from product defaults.
 """
-import ast, fnmatch, hashlib, json, operator, re, shutil
+import ast, fnmatch, hashlib, json, operator, re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .knxip import ia_parts, ga_str
@@ -153,6 +154,11 @@ class Project:
         self.tags: list[str] = []            # project-wide tag pool
         self.connections: list[dict] = []    # bus connections (name/type/host/…)
         self.active_connection = ''
+        # ETS building/trade trees, flat by path: 'Haus/EG/Flur' -> {type,
+        # number, …}. Devices point in with '@loc:<path>' / '@trade:<path>'
+        # tags; the dict carries what a tag cannot (node type, empty nodes).
+        self.spaces: dict[str, dict] = {}
+        self.trades: dict[str, dict] = {}
         self._prods = {}                     # filename -> KnxProd
         self._progs = {}                     # (filename, apid) -> Program
         self._dpts = None                    # DPT id -> name, loaded on demand
@@ -186,6 +192,8 @@ class Project:
                             *(t for dv in self.devices for t in dv.tags)})
         self.connections = json.loads(json.dumps(d.get('connections', [])))
         self.active_connection = d.get('active_connection', '')
+        self.spaces = json.loads(json.dumps(d.get('spaces', {})))
+        self.trades = json.loads(json.dumps(d.get('trades', {})))
 
     def state(self):
         """The project as its file dict — a deep copy, so it can be kept as
@@ -203,6 +211,9 @@ class Project:
                      if g.get('security', 'auto') != 'auto' else {}),
                   **({'key': g['key']} if g.get('key') else {})}
                  for ga, g in sorted(self.gas.items())]}
+        # only when present, so a project without them keeps its file
+        d.update({k: v for k, v in (('spaces', self.spaces),
+                                    ('trades', self.trades)) if v})
         return json.loads(json.dumps(d))
 
     def save(self, path=None):
@@ -217,16 +228,21 @@ class Project:
     def import_product(self, src) -> str:
         """Copy a knxprod into catalog/ (dedup by content). Returns filename."""
         src = Path(src)
+        return self.import_product_bytes(src.name, src.read_bytes())
+
+    def import_product_bytes(self, name, data) -> str:
+        """A knxprod given as bytes (a knxproj's manufacturer folder,
+        re-packed) into catalog/, dedup by content. Returns filename."""
         cat = self.path / 'catalog'
         cat.mkdir(parents=True, exist_ok=True)
-        h = hashlib.sha256(src.read_bytes()).hexdigest()
+        h = hashlib.sha256(data).hexdigest()
         for f in cat.glob('*.knxprod'):
             if hashlib.sha256(f.read_bytes()).hexdigest() == h:
                 return f.name
-        dst = cat / src.name
+        dst = cat / name
         if dst.exists():                     # same name, different content
-            dst = cat / f'{src.stem}-{h[:8]}.knxprod'
-        shutil.copy(src, dst)
+            dst = cat / f'{Path(name).stem}-{h[:8]}.knxprod'
+        dst.write_bytes(data)
         return dst.name
 
     def prod(self, filename) -> KnxProd:
@@ -235,9 +251,23 @@ class Project:
         return self._prods[filename]
 
     def program(self, device):
+        if not device.product:      # imported without its application program
+            raise LookupError(f'{device.name}: product not in the project')
         key = (device.product, device.variant)
         if key not in self._progs:
             self._progs[key] = self.prod(device.product).load_program(device.variant)
+        return self._progs[key]
+
+    def program_or_none(self, device):
+        """The device's Program, or None when the project cannot provide one
+        (no product, or one the parser rejects). A failure is remembered, so
+        the list can ask for every device on every rebuild."""
+        key = (device.product, device.variant)
+        if key not in self._progs:
+            try:
+                self.program(device)
+            except (LookupError, ValueError, OSError, ET.ParseError):
+                self._progs[key] = None
         return self._progs[key]
 
     # ---- devices ---------------------------------------------------------

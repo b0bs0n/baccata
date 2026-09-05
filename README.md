@@ -2,9 +2,10 @@
 
 # Baccata
 
-KNX project editor and commissioning tool. Import `.knxprod` product files,
-edit device parameters and group addresses, download to devices over a KNX/IP
-interface, and manage KNX Data Secure keys.
+KNX project editor and commissioning tool. Import `.knxprod` product files
+or a whole ETS project (`.knxproj`), edit device parameters and group
+addresses, download to devices over a KNX/IP interface, verify what a device
+holds, and manage KNX Data Secure keys.
 
 > **Early version.** Baccata is under active development and not suitable for
 > production installations. It writes to KNX devices; a bad download can leave

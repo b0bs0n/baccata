@@ -205,6 +205,8 @@ def device_secured(project, dev):
     secured, since whichever you commission first would still see the other as
     plain."""
     sec = dev.sec or {}
+    if not dev.product:                  # imported without its program
+        return False
     return bool(project.program(dev).secure
                 and (sec.get('tool_key') or sec.get('commissioning')))
 

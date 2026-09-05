@@ -29,6 +29,7 @@ from .knxdatasec import S_A_DATA, decode_fdsk, unsecure_group
 from .knxsec import make_bus
 from . import theme
 from . import knxsecure as ks
+from .knxproj import KnxProj, PasswordRequired, WrongPassword, import_knxproj
 
 TP_RE = re.compile(r'\{\{\d+(?::([^}]*))?\}\}')   # {{0}} or {{0:default}}
 HEADER_ROLE = Qt.UserRole + 1   # settings tree: groups pages, has none
@@ -446,6 +447,7 @@ class Editor(QMainWindow):
         for label, fn, key in [
                 ('New', self.new_project, 'Ctrl+N'),
                 ('Open…', self.open_project, 'Ctrl+O'),
+                ('Import…', self.import_ets, 'Ctrl+I'),
                 ('Save', self.save_project, 'Ctrl+S'),
                 ('Reload', self.reload_project, 'Ctrl+Shift+R')]:
             a = tb.addAction(label, fn)
@@ -1112,6 +1114,53 @@ class Editor(QMainWindow):
         self.proj = Project(path)
         self.after_load()
 
+    def import_ets(self):
+        """An ETS project (.knxproj) into a new Baccata project folder. The
+        vendor files it carries become the catalog; devices whose program is
+        not in the file are kept and painted red."""
+        if not self.maybe_save():
+            return
+        home = QStandardPaths.writableLocation(QStandardPaths.HomeLocation)
+        src, _ = QFileDialog.getOpenFileName(self, 'Import ETS project', home,
+                                             'ETS project (*.knxproj)')
+        if not src:
+            return
+        dst, _ = QFileDialog.getSaveFileName(
+            self, 'New project folder for the import',
+            str(Path(home) / (Path(src).stem + '.baccata')),
+            'Baccata project (*.baccata)')
+        if not dst:
+            return
+        password, prompt = None, 'Project password:'
+        while True:
+            try:
+                kp = KnxProj(src, password)
+                break
+            except (PasswordRequired, WrongPassword) as e:
+                if isinstance(e, WrongPassword):
+                    prompt = 'Wrong password. Project password:'
+                password, ok = QInputDialog.getText(
+                    self, 'Import ETS project', prompt, QLineEdit.Password)
+                if not ok:
+                    return
+            except Exception as e:
+                warn(self, f'Cannot read {src}:\n{e}', 'Import ETS project')
+                return
+        proj = Project()
+        proj.save(dst)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            report = import_knxproj(proj, kp)
+            proj.save()
+        except Exception as e:
+            warn(self, f'Import failed:\n{e}', 'Import ETS project')
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.proj = proj
+        self.after_load()
+        info(self, '\n'.join(report), 'Import ETS project')
+
     def save_project(self):
         if not self.proj.path:
             return self.new_project()
@@ -1518,11 +1567,16 @@ class Editor(QMainWindow):
                 it.setForeground(0, dim)
             if not d.app_synced(fp[d.id]):
                 it.setForeground(1, dim)
+            prog = self.proj.program_or_none(d)
+            if prog is None:        # imported without its application program
+                it.setForeground(1, theme.RED)
+                it.setToolTip(1, 'Product not in the project: its application '
+                                 'program was not in the imported file')
             self.dev_list.addTopLevelItem(it)
             # interface tunnel slots: same address space, so ETS lists them
             # as collapsible children of the interface; addresses editable
             tuns = d.iface.get('tunnels', [])
-            for i in range(self.proj.program(d).tunnels):
+            for i in range(prog.tunnels if prog else 0):
                 ch = QTreeWidgetItem([tuns[i] if i < len(tuns) else '',
                                       f'Tunnel {i + 1}', ''])
                 ch.setFlags(ch.flags() | Qt.ItemIsEditable)
@@ -1652,8 +1706,8 @@ class Editor(QMainWindow):
         self._icons = {}
         self._expanded, self._collapsed = set(), set()
         if self.dev:
-            self.prog = self.proj.program(self.dev)
-            self.defaults = self.prog.defaults()
+            self.prog = self.proj.program_or_none(self.dev)
+            self.defaults = self.prog.defaults() if self.prog else {}
         else:
             self.prog, self.defaults = None, {}
         self.refresh()
@@ -2573,7 +2627,7 @@ class Editor(QMainWindow):
     def refresh(self):
         # prog.values() also runs the product's ParameterCalculations, which
         # decide the visibility of whole pages (see knxcalc)
-        self.values = self.prog.values(self.dev) if self.dev else {}
+        self.values = self.prog.values(self.dev) if self.dev and self.prog else {}
         cur = self.blocks.currentItem()
         cur_id = cur.data(0, Qt.UserRole).id if cur else None
         self.blocks.blockSignals(True)
@@ -2736,6 +2790,16 @@ class Editor(QMainWindow):
             else:
                 for n in self.form_nodes(node.children):
                     self.add_row(form, n)
+        elif self.dev:                  # imported without its program
+            lab = QLabel('Product not in the project.\n\n'
+                         'The ETS file did not carry this device\'s '
+                         'application program\n'
+                         f'({self.dev.variant or "unknown"}), so its settings '
+                         'cannot be shown\nand nothing can be sent to it.')
+            lab.setStyleSheet(f'color: {theme.RED.name()}')
+            lab.setAlignment(Qt.AlignCenter)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            form.addRow(lab)
         elif not self.proj.path:
             lab = _mute(QLabel('No project open.\n\n'
                                'Use New (Ctrl+N) or Open… (Ctrl+O) to start.\n'
